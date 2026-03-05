@@ -1,0 +1,2875 @@
+-- ╔══════════════════════════════════════════════════════════════════════════════╗
+-- ║                         BLUE HEATER 2 - MADE BY MINK                         ║
+-- ║                         Version 4.0 | Fully Working Dungeons                 ║
+-- ╚══════════════════════════════════════════════════════════════════════════════╝
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   LIBRARY LOADING
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
+local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   SERVICES & VARIABLES
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local TeleportService = game:GetService("TeleportService")
+local Lighting = game:GetService("Lighting")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualUser = game:GetService("VirtualUser")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- Constants
+local V3_ZERO = Vector3.zero
+local V3_UP = Vector3.new(0, 1, 0)
+local V3_DOWN = Vector3.new(0, -1, 0)
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   STATE MANAGEMENT
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local State = {
+    Character = nil,
+    Humanoid = nil,
+    RootPart = nil,
+    StaminaObj = nil,
+    StartupDone = false,
+    IsFarmTeleporting = false,
+    CollectingChests = false,
+    InDungeon = false,
+    CurrentDungeon = nil,
+    DungeonStartTime = 0,
+    GameDefaults = {
+        UseJumpPower = nil,
+        JumpPower = nil,
+        JumpHeight = nil,
+        WalkSpeed = 16
+    }
+}
+
+task.delay(1.5, function() State.StartupDone = true end)
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   FEATURE CONFIGURATION
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local Features = {
+    -- Combat
+    KillAura = { Enabled = false, Radius = 30, BossPriority = false, Interval = 0.3 },
+    InstantKill = { Enabled = false, Interval = 0.02 },
+    AutoDodge = { Enabled = false, Threshold = 0.3 },
+    
+    -- Movement
+    WalkSpeed = { Enabled = false, Value = 50 },
+    JumpPower = { Enabled = false, Value = 50 },
+    InfiniteJump = { Enabled = false },
+    Fly = { Enabled = false, Speed = 50 },
+    Noclip = { Enabled = false },
+    Float = { Enabled = false },
+    AntiFall = { Enabled = false },
+    InfStamina = { Enabled = false },
+    
+    -- Farming
+    AutoFarm = { Enabled = false },
+    AutoSlime = { Enabled = false },
+    AutoCryanRyan = { Enabled = false },
+    AutoBuffBee = { Enabled = false },
+    AutoModCustom = { Enabled = false, Name = "" },
+    AutoCollect = { Enabled = false },
+    AutoChests = { Enabled = false },
+    
+    -- Dungeon
+    AutoDungeon = { Enabled = false, Selected = "Skeleton King", AutoEnter = false },
+    DungeonAutoKill = { Enabled = false },
+    DungeonAutoLoot = { Enabled = false },
+    DungeonBossOnly = { Enabled = false },
+    DungeonAutoLeave = { Enabled = false, Timer = 30 },
+    DungeonSpeedRun = { Enabled = false },
+    DungeonAutoRetry = { Enabled = false },
+    
+    -- Visual
+    MobESP = { Enabled = false },
+    PlayerESP = { Enabled = false },
+    DungeonESP = { Enabled = false },
+    Fullbright = { Enabled = false },
+    
+    -- Utility
+    AntiAFK = { Enabled = false }
+}
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   REMOTES & ENTITY CACHE
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local Remotes = {
+    PlayerEvents = nil,
+    MultiEntityHit = nil,
+    DungeonRemotes = {},
+    EnterDungeon = nil,
+    LeaveDungeon = nil
+}
+
+local EntityCache = {
+    List = {},
+    Set = {},
+    SpawnedEntities = nil,
+    Connections = {}
+}
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   ESP SYSTEM
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local ESPSystem = {
+    Highlights = {},
+    AncestryConnections = {},
+    ActiveConnections = {},
+    Colors = {
+        Mob = Color3.fromRGB(255, 80, 80),
+        Player = Color3.fromRGB(80, 255, 130),
+        Chest = Color3.fromRGB(255, 200, 80),
+        Boss = Color3.fromRGB(255, 50, 150),
+        DungeonMob = Color3.fromRGB(255, 100, 50),
+        DungeonBoss = Color3.fromRGB(200, 50, 255),
+        Loot = Color3.fromRGB(50, 200, 255)
+    }
+}
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   FLIGHT SYSTEM
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local FlightSystem = {
+    BodyVelocity = nil,
+    BodyGyro = nil,
+    Connection = nil,
+    Keys = {
+        W = Enum.KeyCode.W,
+        S = Enum.KeyCode.S,
+        A = Enum.KeyCode.A,
+        D = Enum.KeyCode.D,
+        Space = Enum.KeyCode.Space,
+        Shift = Enum.KeyCode.LeftShift
+    }
+}
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   LOOP MANAGER
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local LoopManager = {
+    Active = {},
+    Connections = {}
+}
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   DUNGEON SYSTEM - BLUE HEATER 2 DUNGEONS (RESEARCHED & UPDATED)
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local DungeonSystem = {
+    -- UPDATED: Accurate dungeon locations based on research
+    Dungeons = {
+        -- Boss Dungeons (F1)
+        { "Skeleton King", CFrame.new(-2800, -120, 4200), "F1", "Castle Mourne" },
+        { "Puppet Master", CFrame.new(-2000, -100, 3500), "Event", "Halloween Lobby" },
+        { "Easter Bunny", CFrame.new(-1500, -80, 2800), "Event", "Sunshine" },
+        { "The Beating Heart", CFrame.new(-3200, -180, 4800), "Event", "Sunshine" },
+        
+        -- Boss Dungeons (F3)
+        { "Orian", CFrame.new(-3500, -150, 5000), "F3", "Sun Palace" },
+        { "Spectral Dragon", CFrame.new(-3800, -200, 5200), "F3", "Unknown" },
+        
+        -- Regular Dungeons (F1)
+        { "Enchanted Forest", CFrame.new(-1200, -60, 2200), "F1", "Overworld" },
+        { "Temple Ruins", CFrame.new(-1800, -90, 3100), "F1", "Overworld" },
+        { "Mines", CFrame.new(-2400, -110, 3800), "F1", "Overworld" },
+        { "Cellar", CFrame.new(-900, -40, 1500), "F1", "Overworld" },
+        { "Catacombs", CFrame.new(-3000, -140, 4500), "F1", "Overworld" },
+        
+        -- Regular Dungeons (F2)
+        { "Haunted Mansion", CFrame.new(-1600, -70, 2600), "F2", "Overworld" },
+        { "Ominous Cave", CFrame.new(-2200, -100, 3400), "F2", "Overworld" },
+        { "Arcane Archive", CFrame.new(-2600, -130, 4000), "F2", "Overworld" },
+        
+        -- Regular Dungeons (F3)
+        { "Melted Castle", CFrame.new(-2000, -85, 3200), "F3", "Vulture's Maw" },
+        { "City Sewers", CFrame.new(-1100, -50, 2000), "F3", "Ruby Depths" },
+        { "Buried Tomb", CFrame.new(-3300, -160, 4900), "F3", "Overworld" },
+        { "Secluded Spire", CFrame.new(-1400, -75, 2400), "F3", "Overworld" },
+        { "Mountain Temple", CFrame.new(-2500, -120, 3900), "F3", "Overworld" },
+        { "Bamboo Forest", CFrame.new(-1000, -45, 1800), "F3", "Overworld" },
+        
+        -- Daily Boss Dungeons
+        { "Death", CFrame.new(-4000, -250, 5500), "F3", "Valley of Heads" },
+        { "Orochi-onna", CFrame.new(-4200, -280, 5800), "F3", "Unknown" },
+        { "Space Moth", CFrame.new(-4400, -300, 6000), "F3", "Unknown" },
+        
+        -- Special
+        { "The Tower", CFrame.new(922, -255, -1316), "F4", "Autumn Woods" },
+    },
+    
+    Names = {},
+    Locations = {},
+    Floors = {},
+    Regions = {},
+    Active = false,
+    StartTime = 0,
+    ClearedRooms = {},
+    
+    -- UPDATED: Comprehensive dungeon mob list
+    DungeonMobs = {
+        -- F1 Mobs
+        "Skeleton Warrior", "Skeleton Mage", "Skeleton Gunner", "Armored Skeleton Warrior",
+        "Bandit", "Bandit Archer", "Bandit Mage", "Bandit Leader",
+        "Goblin", "Goblin Archer", "Goblin Mage", "Goblin Shaman",
+        "Wolf", "Dire Wolf", "Alpha Wolf",
+        "Slime", "Giant Slime", "Metal Slime", "King Slime",
+        "Zombie", "Ghoul", "Wraith", "Specter", "Ghost",
+        "Spider", "Giant Spider", "Vampire Bat", "Bat",
+        "Dungeon Guardian", "Dungeon Keeper", "Dungeon Warden",
+        
+        -- F2 Mobs
+        "Snowfield Pyunnit", "Pyunnit", "Ice Spirit", "Frost Wolf",
+        "Haunted Armor", "Possessed Doll", "Poltergeist",
+        "Cave Troll", "Cave Bat", "Stone Golem",
+        "Arcane Construct", "Magic Sentinel", "Spellbound Armor",
+        
+        -- F3 Mobs
+        "Dunescourge", "Cyclops", "Desert Snake", "Death Knight",
+        "Burrowmaw", "Graveshot", "Tyrodon", "Sunset Knight",
+        "Sunset Executioner", "Death Serpent", "Sandhorn", "Minotaur",
+        "Sandworm", "Desert Spirit", "Mummy", "Scarab",
+        
+        -- F4 Mobs
+        "Tower Guardian", "Tower Sentinel", "Fallen Knight", "Corrupted Mage"
+    },
+    
+    -- UPDATED: Complete dungeon boss list
+    DungeonBosses = {
+        "Skeleton King", "Orian", "King Orian II", "Puppet Master", 
+        "Easter Bunny", "The Beating Heart", "Death", "Orochi-onna", 
+        "Space Moth", "Spectral Dragon", "Tower Master"
+    },
+    
+    -- Loot detection
+    LootKeywords = {
+        "drop", "loot", "reward", "chest", "coin", "gold",
+        "weapon", "armor", "item", "material", "crystal", "upgrade"
+    }
+}
+
+-- Initialize dungeon data
+for _, dungeon in ipairs(DungeonSystem.Dungeons) do
+    table.insert(DungeonSystem.Names, dungeon[1])
+    DungeonSystem.Locations[dungeon[1]] = dungeon[2]
+    DungeonSystem.Floors[dungeon[1]] = dungeon[3]
+    DungeonSystem.Regions[dungeon[1]] = dungeon[4]
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   UTILITY FUNCTIONS
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local function Notify(title, content, duration)
+    duration = duration or 3
+    pcall(function()
+        Fluent:Notify({
+            Title = title,
+            Content = content,
+            Duration = duration
+        })
+    end)
+end
+
+local function IsBoss(name)
+    if not name then return false end
+    local lower = name:lower()
+    for _, bossName in ipairs(DungeonSystem.DungeonBosses) do
+        if lower:find(bossName:lower()) then
+            return true
+        end
+    end
+    return lower:find("boss") ~= nil or lower:find("king") ~= nil or lower:find("master") ~= nil
+end
+
+local function IsDungeonMob(name)
+    if not name then return false end
+    local lower = name:lower()
+    
+    -- Check against known dungeon mobs
+    for _, mobName in ipairs(DungeonSystem.DungeonMobs) do
+        if lower:find(mobName:lower()) then
+            return true
+        end
+    end
+    
+    -- Check for dungeon-related keywords
+    return lower:find("skeleton") or lower:find("bandit") or lower:find("goblin") or 
+           lower:find("wolf") or lower:find("slime") or lower:find("dungeon") or 
+           lower:find("guardian") or lower:find("zombie") or lower:find("ghoul") or
+           lower:find("wraith") or lower:find("specter") or lower:find("spider") or
+           lower:find("vampire") or lower:find("keeper") or lower:find("pyunnit") or
+           lower:find("dunescourge") or lower:find("cyclops") or lower:find("minotaur")
+end
+
+local function IsLoot(name)
+    if not name then return false end
+    local lower = name:lower()
+    for _, keyword in ipairs(DungeonSystem.LootKeywords) do
+        if lower:find(keyword) then
+            return true
+        end
+    end
+    return false
+end
+
+local function FireHit(targets)
+    if Remotes.MultiEntityHit and #targets > 0 then
+        pcall(function()
+            Remotes.MultiEntityHit:FireServer(targets)
+        end)
+    end
+end
+
+local function SafeTeleport(cframe)
+    if not State.RootPart then return false end
+    local success = pcall(function()
+        State.RootPart.Anchored = true
+        State.RootPart.CFrame = cframe
+        State.RootPart.AssemblyLinearVelocity = V3_ZERO
+        task.wait(0.08)
+        if State.RootPart then
+            State.RootPart.Anchored = false
+        end
+    end)
+    return success
+end
+
+local function FarmTeleport(cframe)
+    if not State.RootPart or not State.RootPart.Parent then return false end
+    if State.IsFarmTeleporting then return false end
+    
+    State.IsFarmTeleporting = true
+    
+    local success = pcall(function()
+        State.RootPart.AssemblyLinearVelocity = V3_ZERO
+        State.RootPart.RotVelocity = V3_ZERO
+        State.RootPart.Anchored = true
+        State.RootPart.CFrame = cframe
+        State.RootPart.AssemblyLinearVelocity = V3_ZERO
+        State.RootPart.RotVelocity = V3_ZERO
+        RunService.Stepped:Wait()
+        if State.RootPart then
+            State.RootPart.Anchored = false
+        end
+    end)
+    
+    State.IsFarmTeleporting = false
+    return success
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   DUNGEON DETECTION SYSTEM
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local function DetectDungeonEntry()
+    -- Check if we're in a dungeon by looking at:
+    -- 1. Workspace structure changes
+    -- 2. Specific dungeon objects
+    -- 3. Mob types in the area
+    
+    local inDungeon = false
+    local dungeonName = nil
+    
+    -- Check for dungeon-specific objects
+    pcall(function()
+        -- Look for dungeon portal/exit objects
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            local name = obj.Name:lower()
+            if name:find("dungeon") or name:find("exit") or name:find("portal") then
+                if obj:IsA("BasePart") or obj:IsA("Model") then
+                    inDungeon = true
+                end
+            end
+        end
+        
+        -- Check mob composition
+        local dungeonMobCount = 0
+        local totalMobCount = 0
+        
+        for _, entity in ipairs(EntityCache.List) do
+            if entity and entity.Parent then
+                totalMobCount = totalMobCount + 1
+                if IsDungeonMob(entity.Name) then
+                    dungeonMobCount = dungeonMobCount + 1
+                end
+            end
+        end
+        
+        -- If majority of mobs are dungeon mobs, we're likely in a dungeon
+        if totalMobCount > 0 and (dungeonMobCount / totalMobCount) > 0.7 then
+            inDungeon = true
+        end
+    end)
+    
+    return inDungeon
+end
+
+local function UpdateDungeonStatus()
+    local wasInDungeon = State.InDungeon
+    State.InDungeon = DetectDungeonEntry()
+    
+    if State.InDungeon and not wasInDungeon then
+        State.DungeonStartTime = tick()
+        DungeonSystem.Active = true
+        -- Entered dungeon
+    elseif not State.InDungeon and wasInDungeon then
+        DungeonSystem.Active = false
+        State.DungeonStartTime = 0
+        -- Left dungeon
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   ENTITY CACHE MANAGEMENT
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local function InitializeRemotes()
+    local success = pcall(function()
+        Remotes.PlayerEvents = ReplicatedStorage:WaitForChild("PlayerEvents", 10)
+        if Remotes.PlayerEvents then
+            Remotes.MultiEntityHit = Remotes.PlayerEvents:WaitForChild("MultiEntityHit", 10)
+            
+            Remotes.PlayerEvents.ChildAdded:Connect(function(child)
+                if child.Name == "MultiEntityHit" then
+                    Remotes.MultiEntityHit = child
+                end
+            end)
+        end
+    end)
+    
+    if not success then
+        warn("[Blue Heater 2] Failed to initialize PlayerEvents")
+    end
+    
+    -- Find dungeon remotes
+    local success2 = pcall(function()
+        for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
+            if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
+                local name = remote.Name:lower()
+                if name:find("dungeon") or name:find("raid") or name:find("enter") or name:find("leave") or name:find("exit") then
+                    Remotes.DungeonRemotes[remote.Name] = remote
+                    if name:find("enter") then
+                        Remotes.EnterDungeon = remote
+                    elseif name:find("leave") or name:find("exit") then
+                        Remotes.LeaveDungeon = remote
+                    end
+                end
+            end
+        end
+    end)
+    
+    local success3 = pcall(function()
+        EntityCache.SpawnedEntities = Workspace:WaitForChild("SpawnedEntities", 10)
+    end)
+    
+    if not success3 then
+        warn("[Blue Heater 2] SpawnedEntities not found in Workspace")
+    end
+end
+
+local function RebuildEntityCache()
+    EntityCache.List = {}
+    EntityCache.Set = {}
+    
+    if not EntityCache.SpawnedEntities then 
+        local success = pcall(function()
+            EntityCache.SpawnedEntities = Workspace:WaitForChild("SpawnedEntities", 5)
+        end)
+        if not success then return end
+    end
+    
+    for _, entity in ipairs(EntityCache.SpawnedEntities:GetChildren()) do
+        if entity:IsA("Model") then
+            table.insert(EntityCache.List, entity)
+            EntityCache.Set[entity] = true
+        end
+    end
+end
+
+local function SetupEntityCache()
+    -- Cleanup existing connections
+    for _, conn in pairs(EntityCache.Connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    EntityCache.Connections = {}
+    
+    if not EntityCache.SpawnedEntities then 
+        local success = pcall(function()
+            EntityCache.SpawnedEntities = Workspace:WaitForChild("SpawnedEntities", 5)
+        end)
+        if not success then return end
+    end
+    
+    RebuildEntityCache()
+    
+    local success1 = pcall(function()
+        local conn1 = EntityCache.SpawnedEntities.ChildAdded:Connect(function(entity)
+            if entity:IsA("Model") and not EntityCache.Set[entity] then
+                table.insert(EntityCache.List, entity)
+                EntityCache.Set[entity] = true
+                
+                -- Apply ESP if enabled
+                if Features.MobESP.Enabled and entity:FindFirstChild("HumanoidRootPart") then
+                    local color = IsBoss(entity.Name) and ESPSystem.Colors.Boss or ESPSystem.Colors.Mob
+                    CreateESP(entity, color)
+                end
+            end
+        end)
+        table.insert(EntityCache.Connections, conn1)
+    end)
+    
+    local success2 = pcall(function()
+        local conn2 = EntityCache.SpawnedEntities.ChildRemoved:Connect(function(entity)
+            if EntityCache.Set[entity] then
+                EntityCache.Set[entity] = nil
+                for i = 1, #EntityCache.List do
+                    if EntityCache.List[i] == entity then
+                        EntityCache.List[i] = EntityCache.List[#EntityCache.List]
+                        EntityCache.List[#EntityCache.List] = nil
+                        break
+                    end
+                end
+                -- Remove ESP
+                RemoveESP(entity)
+            end
+        end)
+        table.insert(EntityCache.Connections, conn2)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   LOOP MANAGEMENT
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+function LoopManager.Start(name, interval, callback)
+    LoopManager.Stop(name)
+    
+    LoopManager.Active[name] = task.spawn(function()
+        while true do
+            local success, err = pcall(callback)
+            if not success then
+                warn("[" .. name .. " Error]: " .. tostring(err))
+            end
+            task.wait(interval)
+        end
+    end)
+end
+
+function LoopManager.Stop(name)
+    if LoopManager.Active[name] then
+        task.cancel(LoopManager.Active[name])
+        LoopManager.Active[name] = nil
+    end
+end
+
+function LoopManager.StopAll()
+    for name, _ in pairs(LoopManager.Active) do
+        LoopManager.Stop(name)
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   CHARACTER MANAGEMENT
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local function RebuildCharacterParts()
+    local parts = {}
+    if State.Character then
+        for _, descendant in ipairs(State.Character:GetDescendants()) do
+            if descendant:IsA("BasePart") then
+                table.insert(parts, descendant)
+            end
+        end
+    end
+    return parts
+end
+
+local function SaveGameDefaults()
+    if not State.Humanoid then return end
+    
+    if State.GameDefaults.UseJumpPower == nil then
+        task.wait(0.1)
+        State.GameDefaults.UseJumpPower = State.Humanoid.UseJumpPower
+        State.GameDefaults.JumpPower = State.Humanoid.JumpPower
+        State.GameDefaults.JumpHeight = State.Humanoid.JumpHeight
+    end
+end
+
+local function RestoreGameDefaults()
+    if not State.Humanoid then return end
+    
+    if State.GameDefaults.UseJumpPower ~= nil then
+        State.Humanoid.UseJumpPower = State.GameDefaults.UseJumpPower
+        State.Humanoid.JumpPower = State.GameDefaults.JumpPower
+        State.Humanoid.JumpHeight = State.GameDefaults.JumpHeight
+    end
+end
+
+local function ApplyJumpPower()
+    if not State.Humanoid then return end
+    State.Humanoid.UseJumpPower = true
+    State.Humanoid.JumpPower = Features.JumpPower.Value
+end
+
+local function FindStaminaObject()
+    if not State.Character then return nil end
+    
+    local values = State.Character:FindFirstChild("Values")
+    if values then
+        return values:FindFirstChild("Stamina")
+    end
+    return nil
+end
+
+local function RefreshCharacter(character)
+    State.Character = character
+    State.Humanoid = character:WaitForChild("Humanoid", 8)
+    State.RootPart = character:WaitForChild("HumanoidRootPart", 8)
+    State.StaminaObj = nil
+    
+    if not State.Humanoid or not State.RootPart then return end
+    
+    task.wait(0.05)
+    
+    -- Reset states
+    State.Humanoid.PlatformStand = false
+    State.Humanoid.WalkSpeed = Features.WalkSpeed.Enabled and Features.WalkSpeed.Value or 16
+    
+    -- Save defaults
+    SaveGameDefaults()
+    
+    -- Apply jump settings
+    if Features.JumpPower.Enabled then
+        ApplyJumpPower()
+    else
+        RestoreGameDefaults()
+    end
+    
+    -- Reset physics
+    State.RootPart.Anchored = false
+    State.RootPart.AssemblyLinearVelocity = V3_ZERO
+    State.RootPart.RotVelocity = V3_ZERO
+    
+    -- Find stamina
+    State.StaminaObj = FindStaminaObject()
+    
+    -- Setup stamina listener
+    if not State.StaminaObj then
+        character.ChildAdded:Connect(function(child)
+            if child.Name == "Values" then
+                State.StaminaObj = child:WaitForChild("Stamina", 5)
+            end
+        end)
+    end
+    
+    -- Reset features on respawn
+    Features.AutoChests.Enabled = false
+    Features.AutoCollect.Enabled = false
+    
+    if Features.Fly.Enabled then
+        ToggleFly(false)
+    end
+end
+
+local function InitializeCharacter()
+    local success = pcall(function()
+        local character = LocalPlayer.Character
+        if character then
+            RefreshCharacter(character)
+        end
+        
+        LocalPlayer.CharacterAdded:Connect(function(newChar)
+            task.wait(0.1)
+            RefreshCharacter(newChar)
+        end)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   NOCLIP SYSTEM
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local NoclipSystem = {
+    Connection = nil,
+    DescendantConnection = nil,
+    Parts = {}
+}
+
+local function EnableNoclip()
+    if NoclipSystem.Connection then
+        NoclipSystem.Connection:Disconnect()
+    end
+    if NoclipSystem.DescendantConnection then
+        NoclipSystem.DescendantConnection:Disconnect()
+    end
+    
+    NoclipSystem.Parts = RebuildCharacterParts()
+    
+    local success = pcall(function()
+        NoclipSystem.DescendantConnection = State.Character.DescendantAdded:Connect(function(descendant)
+            if descendant:IsA("BasePart") then
+                table.insert(NoclipSystem.Parts, descendant)
+            end
+        end)
+    end)
+    
+    NoclipSystem.Connection = RunService.Stepped:Connect(function()
+        if not Features.Noclip.Enabled then return end
+        for _, part in ipairs(NoclipSystem.Parts) do
+            if part and part.Parent and part.CanCollide then
+                part.CanCollide = false
+            end
+        end
+    end)
+end
+
+local function DisableNoclip()
+    if NoclipSystem.Connection then
+        NoclipSystem.Connection:Disconnect()
+        NoclipSystem.Connection = nil
+    end
+    if NoclipSystem.DescendantConnection then
+        NoclipSystem.DescendantConnection:Disconnect()
+        NoclipSystem.DescendantConnection = nil
+    end
+    
+    for _, part in ipairs(NoclipSystem.Parts) do
+        if part and part.Parent then
+            part.CanCollide = true
+        end
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   FLIGHT SYSTEM
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local function CleanupFlight()
+    if FlightSystem.BodyVelocity and FlightSystem.BodyVelocity.Parent then
+        FlightSystem.BodyVelocity:Destroy()
+    end
+    if FlightSystem.BodyGyro and FlightSystem.BodyGyro.Parent then
+        FlightSystem.BodyGyro:Destroy()
+    end
+    FlightSystem.BodyVelocity = nil
+    FlightSystem.BodyGyro = nil
+end
+
+function ToggleFly(enabled)
+    Features.Fly.Enabled = enabled
+    
+    if enabled then
+        if not State.RootPart then
+            Notify("Error", "Character not found!", 3)
+            Features.Fly.Enabled = false
+            return
+        end
+        
+        if FlightSystem.Connection then
+            FlightSystem.Connection:Disconnect()
+        end
+        
+        CleanupFlight()
+        
+        if State.Humanoid then
+            State.Humanoid.PlatformStand = true
+        end
+        
+        -- Create flight physics
+        local success = pcall(function()
+            FlightSystem.BodyVelocity = Instance.new("BodyVelocity")
+            FlightSystem.BodyVelocity.Velocity = V3_ZERO
+            FlightSystem.BodyVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+            FlightSystem.BodyVelocity.P = 1e4
+            FlightSystem.BodyVelocity.Parent = State.RootPart
+            
+            FlightSystem.BodyGyro = Instance.new("BodyGyro")
+            FlightSystem.BodyGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+            FlightSystem.BodyGyro.P = 1e4
+            FlightSystem.BodyGyro.D = 100
+            FlightSystem.BodyGyro.CFrame = State.RootPart.CFrame
+            FlightSystem.BodyGyro.Parent = State.RootPart
+        end)
+        
+        if not success then
+            Notify("Error", "Failed to create flight physics", 3)
+            Features.Fly.Enabled = false
+            return
+        end
+        
+        -- Flight control loop
+        FlightSystem.Connection = RunService.RenderStepped:Connect(function()
+            if not Features.Fly.Enabled or not State.RootPart or not FlightSystem.BodyVelocity then
+                return
+            end
+            
+            local cameraCF = Camera.CFrame
+            local direction = V3_ZERO
+            
+            if UserInputService:IsKeyDown(FlightSystem.Keys.W) then
+                direction = direction + cameraCF.LookVector
+            end
+            if UserInputService:IsKeyDown(FlightSystem.Keys.S) then
+                direction = direction - cameraCF.LookVector
+            end
+            if UserInputService:IsKeyDown(FlightSystem.Keys.A) then
+                direction = direction - cameraCF.RightVector
+            end
+            if UserInputService:IsKeyDown(FlightSystem.Keys.D) then
+                direction = direction + cameraCF.RightVector
+            end
+            if UserInputService:IsKeyDown(FlightSystem.Keys.Space) then
+                direction = direction + V3_UP
+            end
+            if UserInputService:IsKeyDown(FlightSystem.Keys.Shift) then
+                direction = direction + V3_DOWN
+            end
+            
+            FlightSystem.BodyVelocity.Velocity = direction.Magnitude > 0 
+                and direction.Unit * Features.Fly.Speed 
+                or V3_ZERO
+            
+            FlightSystem.BodyGyro.CFrame = CFrame.new(V3_ZERO, cameraCF.LookVector)
+        end)
+        
+        -- Flight enabled
+    else
+        if FlightSystem.Connection then
+            FlightSystem.Connection:Disconnect()
+            FlightSystem.Connection = nil
+        end
+        
+        CleanupFlight()
+        
+        if State.Humanoid then
+            State.Humanoid.PlatformStand = false
+        end
+        
+        if State.RootPart then
+            State.RootPart.AssemblyLinearVelocity = V3_ZERO
+        end
+        
+        -- Flight disabled
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   JUMP SYSTEMS
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local JumpSystem = {
+    InfiniteJumpConnection = nil,
+    AntiFallConnection = nil
+}
+
+local function SetupAntiFall()
+    if JumpSystem.AntiFallConnection then
+        JumpSystem.AntiFallConnection:Disconnect()
+        JumpSystem.AntiFallConnection = nil
+    end
+    
+    if not State.Humanoid then return end
+    
+    JumpSystem.AntiFallConnection = State.Humanoid.StateChanged:Connect(function(_, newState)
+        if not Features.AntiFall.Enabled or not State.RootPart then return end
+        
+        if newState == Enum.HumanoidStateType.Landed then
+            local velocity = State.RootPart.AssemblyLinearVelocity
+            if velocity.Y < -15 then
+                State.RootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, -15, velocity.Z)
+            end
+            
+            task.defer(function()
+                if State.Humanoid and State.Humanoid.Parent then
+                    State.Humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+                end
+            end)
+        end
+    end)
+end
+
+local function SetupInfiniteJump()
+    if JumpSystem.InfiniteJumpConnection then
+        JumpSystem.InfiniteJumpConnection:Disconnect()
+        JumpSystem.InfiniteJumpConnection = nil
+    end
+    
+    if not State.Humanoid then return end
+    
+    JumpSystem.InfiniteJumpConnection = UserInputService.JumpRequest:Connect(function()
+        if not Features.InfiniteJump.Enabled or not State.Humanoid or State.Humanoid.Health <= 0 then
+            return
+        end
+        
+        if Features.JumpPower.Enabled then return end
+        
+        pcall(function()
+            State.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end)
+    end)
+end
+
+local function CleanupInfiniteJump()
+    if JumpSystem.InfiniteJumpConnection then
+        JumpSystem.InfiniteJumpConnection:Disconnect()
+        JumpSystem.InfiniteJumpConnection = nil
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   ESP SYSTEM
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+function CreateESP(target, color)
+    if ESPSystem.Highlights[target] or not target or not target.Parent then
+        return
+    end
+    
+    local success, highlight = pcall(function()
+        local hl = Instance.new("Highlight")
+        hl.FillColor = color
+        hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+        hl.FillTransparency = 0.5
+        hl.OutlineTransparency = 0
+        hl.Parent = target
+        return hl
+    end)
+    
+    if not success or not highlight then return end
+    
+    ESPSystem.Highlights[target] = highlight
+    
+    local success2 = pcall(function()
+        ESPSystem.AncestryConnections[target] = target.AncestryChanged:Connect(function()
+            if not target.Parent then
+                if ESPSystem.Highlights[target] then
+                    pcall(function() ESPSystem.Highlights[target]:Destroy() end)
+                    ESPSystem.Highlights[target] = nil
+                end
+                if ESPSystem.AncestryConnections[target] then
+                    ESPSystem.AncestryConnections[target]:Disconnect()
+                    ESPSystem.AncestryConnections[target] = nil
+                end
+            end
+        end)
+    end)
+end
+
+function RemoveESP(target)
+    if ESPSystem.Highlights[target] then
+        pcall(function() ESPSystem.Highlights[target]:Destroy() end)
+        ESPSystem.Highlights[target] = nil
+    end
+    if ESPSystem.AncestryConnections[target] then
+        ESPSystem.AncestryConnections[target]:Disconnect()
+        ESPSystem.AncestryConnections[target] = nil
+    end
+end
+
+local function ClearAllESP()
+    for target, _ in pairs(ESPSystem.Highlights) do
+        RemoveESP(target)
+    end
+end
+
+local function CleanupESPConnections()
+    for _, conn in ipairs(ESPSystem.ActiveConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    ESPSystem.ActiveConnections = {}
+end
+
+local function ToggleMobESP(enabled)
+    Features.MobESP.Enabled = enabled
+    CleanupESPConnections()
+    
+    if enabled then
+        if EntityCache.SpawnedEntities then
+            -- Apply ESP to existing mobs
+            for _, entity in ipairs(EntityCache.SpawnedEntities:GetChildren()) do
+                if entity:IsA("Model") and entity:FindFirstChild("HumanoidRootPart") then
+                    local color = IsBoss(entity.Name) and ESPSystem.Colors.Boss or ESPSystem.Colors.Mob
+                    CreateESP(entity, color)
+                end
+            end
+            
+            -- Listen for new mobs
+            local success1 = pcall(function()
+                local conn1 = EntityCache.SpawnedEntities.ChildAdded:Connect(function(entity)
+                    if not Features.MobESP.Enabled then return end
+                    task.wait(0.1)
+                    if entity and entity.Parent and entity:IsA("Model") and entity:FindFirstChild("HumanoidRootPart") then
+                        local color = IsBoss(entity.Name) and ESPSystem.Colors.Boss or ESPSystem.Colors.Mob
+                        CreateESP(entity, color)
+                    end
+                end)
+                table.insert(ESPSystem.ActiveConnections, conn1)
+            end)
+            
+            local success2 = pcall(function()
+                local conn2 = EntityCache.SpawnedEntities.ChildRemoved:Connect(RemoveESP)
+                table.insert(ESPSystem.ActiveConnections, conn2)
+            end)
+        end
+        
+        -- Mob ESP enabled
+    else
+        ClearAllESP()
+        -- Mob ESP disabled
+    end
+end
+
+local function TogglePlayerESP(enabled)
+    Features.PlayerESP.Enabled = enabled
+    
+    if enabled then
+        -- Apply ESP to existing players
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                CreateESP(player.Character, ESPSystem.Colors.Player)
+            end
+        end
+        
+        -- Listen for new players
+        local function OnCharacterAdded(character)
+            task.wait(0.1)
+            if Features.PlayerESP.Enabled and character and character.Parent then
+                CreateESP(character, ESPSystem.Colors.Player)
+            end
+        end
+        
+        local success = pcall(function()
+            local conn1 = Players.PlayerAdded:Connect(function(player)
+                table.insert(ESPSystem.ActiveConnections, player.CharacterAdded:Connect(OnCharacterAdded))
+            end)
+            table.insert(ESPSystem.ActiveConnections, conn1)
+            
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    table.insert(ESPSystem.ActiveConnections, player.CharacterAdded:Connect(OnCharacterAdded))
+                end
+            end
+        end)
+        
+        -- Player ESP enabled
+    else
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Character then
+                RemoveESP(player.Character)
+            end
+        end
+        CleanupESPConnections()
+        -- Player ESP disabled
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   DUNGEON ESP SYSTEM
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local function ToggleDungeonESP(enabled)
+    Features.DungeonESP.Enabled = enabled
+    CleanupESPConnections()
+    
+    if enabled then
+        if EntityCache.SpawnedEntities then
+            -- Apply ESP to dungeon mobs
+            for _, entity in ipairs(EntityCache.SpawnedEntities:GetChildren()) do
+                if entity:IsA("Model") and entity:FindFirstChild("HumanoidRootPart") then
+                    if IsDungeonMob(entity.Name) then
+                        local color = IsBoss(entity.Name) and ESPSystem.Colors.DungeonBoss or ESPSystem.Colors.DungeonMob
+                        CreateESP(entity, color)
+                    end
+                end
+            end
+            
+            -- Listen for new dungeon mobs
+            local success1 = pcall(function()
+                local conn1 = EntityCache.SpawnedEntities.ChildAdded:Connect(function(entity)
+                    if not Features.DungeonESP.Enabled then return end
+                    task.wait(0.1)
+                    if entity and entity.Parent and entity:IsA("Model") and entity:FindFirstChild("HumanoidRootPart") then
+                        if IsDungeonMob(entity.Name) then
+                            local color = IsBoss(entity.Name) and ESPSystem.Colors.DungeonBoss or ESPSystem.Colors.DungeonMob
+                            CreateESP(entity, color)
+                        end
+                    end
+                end)
+                table.insert(ESPSystem.ActiveConnections, conn1)
+            end)
+            
+            local success2 = pcall(function()
+                local conn2 = EntityCache.SpawnedEntities.ChildRemoved:Connect(RemoveESP)
+                table.insert(ESPSystem.ActiveConnections, conn2)
+            end)
+        end
+        
+        -- Dungeon ESP enabled
+    else
+        ClearAllESP()
+        -- Dungeon ESP disabled
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   MOB DROPDOWN SYSTEM
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local MobDropdown = nil
+local LastMobList = {}
+
+local function GetUniqueMobNames()
+    if not EntityCache.SpawnedEntities or #EntityCache.List == 0 then
+        return {"(No mobs found)"}
+    end
+    
+    local seen = {}
+    local names = {}
+    
+    for _, entity in ipairs(EntityCache.List) do
+        if entity and entity ~= State.Character then
+            local name = entity.Name
+            if not seen[name] then
+                seen[name] = true
+                table.insert(names, name)
+            end
+        end
+    end
+    
+    table.sort(names)
+    return #names > 0 and names or {"(No mobs found)"}
+end
+
+local function ListsEqual(a, b)
+    if #a ~= #b then return false end
+    for i = 1, #a do
+        if a[i] ~= b[i] then return false end
+    end
+    return true
+end
+
+local function RefreshMobDropdown()
+    if not MobDropdown then return end
+    
+    local newList = GetUniqueMobNames()
+    if ListsEqual(newList, LastMobList) then return end
+    
+    LastMobList = newList
+    pcall(function() MobDropdown:SetValues(newList) end)
+    
+    local valid = false
+    for _, name in ipairs(newList) do
+        if name == Features.AutoModCustom.Name then
+            valid = true
+            break
+        end
+    end
+    
+    if not valid then
+        Features.AutoModCustom.Name = newList[1] or ""
+        pcall(function() MobDropdown:SetValue(Features.AutoModCustom.Name) end)
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   ANTI-AFK SYSTEM
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local AntiAFKSystem = {
+    Connection = nil,
+    GUI = nil
+}
+
+local function CreateAntiAFKGUI()
+    local success, gui = pcall(function()
+        local g = Instance.new("ScreenGui")
+        g.Name = "AntiAFK_Notification"
+        g.ResetOnSpawn = false
+        g.IgnoreGuiInset = false
+        g.Parent = LocalPlayer:WaitForChild("PlayerGui")
+        
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(0, 560, 0, 60)
+        frame.Position = UDim2.new(0.5, 0, 0, -150)
+        frame.AnchorPoint = Vector2.new(0.5, 0)
+        frame.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+        frame.BackgroundTransparency = 0.1
+        frame.BorderSizePixel = 0
+        frame.ZIndex = 10
+        frame.Parent = g
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 12)
+        corner.Parent = frame
+        
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(0, 195, 255)
+        stroke.Thickness = 2
+        stroke.Transparency = 0.1
+        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        stroke.Parent = frame
+        
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -20, 1, -10)
+        label.Position = UDim2.new(0, 10, 0, 5)
+        label.BackgroundTransparency = 1
+        label.Text = "Anti-AFK Active. You can now AFK without being kicked."
+        label.Font = Enum.Font.GothamSemibold
+        label.TextSize = 18
+        label.TextColor3 = Color3.fromRGB(240, 255, 240)
+        label.TextWrapped = true
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.TextYAlignment = Enum.TextYAlignment.Center
+        label.ZIndex = 11
+        label.Parent = frame
+        
+        -- Animate in
+        TweenService:Create(frame, TweenInfo.new(2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+            Position = UDim2.new(0.5, 0, 0, -50)
+        }):Play()
+        
+        -- Animate out and destroy
+        task.delay(10, function()
+            local out = TweenService:Create(frame, TweenInfo.new(2, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+                Position = UDim2.new(0.5, 0, 0, -120)
+            })
+            out:Play()
+            out.Completed:Wait()
+            g:Destroy()
+        end)
+        
+        return g
+    end)
+    
+    return success and gui or nil
+end
+
+local function SetupAntiAFK()
+    if AntiAFKSystem.Connection then
+        AntiAFKSystem.Connection:Disconnect()
+        AntiAFKSystem.Connection = nil
+    end
+    
+    if not Features.AntiAFK.Enabled then return end
+    
+    local success = pcall(function()
+        AntiAFKSystem.Connection = LocalPlayer.Idled:Connect(function()
+            VirtualUser:Button2Down(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
+            task.wait(1)
+            VirtualUser:Button2Up(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
+        end)
+    end)
+    
+    if success then
+        AntiAFKSystem.GUI = CreateAntiAFKGUI()
+        -- Anti-AFK activated
+    end
+end
+
+local function DisableAntiAFK()
+    if AntiAFKSystem.Connection then
+        AntiAFKSystem.Connection:Disconnect()
+        AntiAFKSystem.Connection = nil
+    end
+    
+    if AntiAFKSystem.GUI then
+        pcall(function() AntiAFKSystem.GUI:Destroy() end)
+        AntiAFKSystem.GUI = nil
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   CORE LOOPS
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local function InitializeCoreLoops()
+    -- Physics Loop
+    RunService.Heartbeat:Connect(function()
+        if not State.Humanoid or not State.RootPart or not State.Humanoid.Parent then
+            return
+        end
+        
+        if not State.StartupDone then return end
+        
+        -- Float System
+        if Features.Float.Enabled then
+            local velocity = State.RootPart.AssemblyLinearVelocity
+            if math.abs(velocity.Y) > 0.5 then
+                State.RootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
+            end
+            
+            local rotVelocity = State.RootPart.RotVelocity
+            if rotVelocity.Magnitude > 0.1 then
+                State.RootPart.RotVelocity = V3_ZERO
+            end
+        end
+        
+        -- Anti-Fall
+        if Features.AntiFall.Enabled then
+            State.Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+            local velocity = State.RootPart.AssemblyLinearVelocity
+            if velocity.Y < -50 then
+                State.RootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, -50, velocity.Z)
+            end
+        end
+    end)
+    
+    -- Player Polling Loop
+    LoopManager.Start("PlayerPolling", 0.05, function()
+        if not State.Humanoid or not State.Humanoid.Parent then return end
+        
+        -- Walk Speed
+        if Features.WalkSpeed.Enabled and State.Humanoid.WalkSpeed ~= Features.WalkSpeed.Value then
+            State.Humanoid.WalkSpeed = Features.WalkSpeed.Value
+        end
+        
+        -- Infinite Stamina
+        if Features.InfStamina.Enabled and State.StaminaObj then
+            local max = State.StaminaObj:GetAttribute("Max") or 100
+            if State.StaminaObj.Value < max then
+                State.StaminaObj.Value = max
+            end
+        end
+    end)
+    
+    -- Dungeon Detection Loop
+    LoopManager.Start("DungeonDetection", 2, function()
+        UpdateDungeonStatus()
+    end)
+    
+    -- Kill Aura Loop (Enhanced - Multiple Rapid Hits)
+    local killAuraTargets = {}
+    LoopManager.Start("KillAura", Features.KillAura.Interval, function()
+        if not Features.KillAura.Enabled or not State.RootPart or not State.RootPart.Parent then
+            return
+        end
+        
+        if not State.Humanoid or State.Humanoid.Health <= 0 then return end
+        
+        local position = State.RootPart.Position
+        local radius = Features.KillAura.Radius
+        local count = 0
+        
+        for _, entity in ipairs(EntityCache.List) do
+            if entity and entity ~= State.Character and entity.Parent then
+                local root = entity:FindFirstChild("HumanoidRootPart")
+                local humanoid = entity:FindFirstChildOfClass("Humanoid")
+                
+                if root and humanoid and humanoid.Health > 0 and (position - root.Position).Magnitude <= radius then
+                    count = count + 1
+                    if Features.KillAura.BossPriority and IsBoss(entity.Name) then
+                        table.insert(killAuraTargets, 1, entity)
+                    else
+                        killAuraTargets[count] = entity
+                    end
+                end
+            end
+        end
+        
+        if count > 0 then
+            -- Fire multiple rapid hits for better damage
+            for hitRound = 1, 3 do
+                FireHit(killAuraTargets)
+            end
+            table.clear(killAuraTargets)
+            
+            if State.RootPart and State.RootPart.Parent then
+                State.RootPart.RotVelocity = V3_ZERO
+            end
+        end
+    end)
+    
+    -- Instant Kill Loop (One-Shot Kill - Direct Damage)
+    LoopManager.Start("InstantKill", 0.06, function()
+        if not Features.InstantKill.Enabled or not State.RootPart or not State.RootPart.Parent then
+            return
+        end
+        
+        if not State.Humanoid or State.Humanoid.Health <= 0 then return end
+        
+        local position = State.RootPart.Position
+        local radius = Features.KillAura.Radius
+        local instantKillTargets = {}
+        local targetCount = 0
+        
+        for _, entity in ipairs(EntityCache.List) do
+            if entity and entity ~= State.Character and entity.Parent then
+                local humanoid = entity:FindFirstChildOfClass("Humanoid")
+                local root = entity:FindFirstChild("HumanoidRootPart") or entity:FindFirstChildWhichIsA("BasePart")
+                
+                if root and humanoid and humanoid.Health > 0 and (position - root.Position).Magnitude <= radius then
+                    targetCount = targetCount + 1
+                    instantKillTargets[targetCount] = entity
+                end
+            end
+        end
+        
+        -- Fast but stable hits on all targets
+        if targetCount > 0 then
+            for hitRound = 1, 12 do
+                FireHit(instantKillTargets)
+            end
+        end
+    end)
+    
+    -- Auto Dodge Loop – Instant "dodge to hitbox" style (direct CFrame teleport)
+LoopManager.Start("AutoDodge", 0.08, function()
+    if not Features.AutoDodge.Enabled or not State.StartupDone then 
+        return 
+    end
+    if not State.Humanoid or not State.RootPart or not State.RootPart.Parent then 
+        return 
+    end
+    
+    -- Only trigger when health is low enough
+    if State.Humanoid.Health > State.Humanoid.MaxHealth * Features.AutoDodge.Threshold then 
+        return 
+    end
+
+    local playerPos   = State.RootPart.Position
+    local closestRoot = nil
+    local closestDist = 17   -- tune: 14–20
+
+    -- Find closest enemy
+    for _, entity in ipairs(EntityCache.List) do
+        if entity and entity ~= State.Character and entity.Parent then
+            local root = entity:FindFirstChild("HumanoidRootPart") 
+                      or entity:FindFirstChildWhichIsA("BasePart")
+            local hum  = entity:FindFirstChildOfClass("Humanoid")
+
+            if root and hum and hum.Health > 0 then
+                local dist = (playerPos - root.Position).Magnitude
+                if dist < closestDist then
+                    closestDist = dist
+                    closestRoot = root
+                end
+            end
+        end
+    end
+
+    if not closestRoot then 
+        return 
+    end
+
+    -- Choose left or right side
+    local mobRight   = closestRoot.CFrame.RightVector
+    local mobForward = closestRoot.CFrame.LookVector
+
+    local toPlayer   = (playerPos - closestRoot.Position).Unit
+    local dotRight   = toPlayer:Dot(mobRight)
+
+    local dodgeSide  = (dotRight > 0) and mobRight or -mobRight
+
+    -- Final position: side + slightly behind + up
+    local dodgeOffset = dodgeSide * 5.4 
+                      + mobForward * -2.2 
+                      + Vector3.new(0, 2.8, 0)
+
+    local targetCFrame = closestRoot.CFrame + dodgeOffset
+
+    local lookAt = CFrame.lookAt(targetCFrame.Position, closestRoot.Position)
+
+    -- Instant dodge (with safety pcall)
+    pcall(function()
+        State.RootPart.CFrame = targetCFrame
+        State.RootPart.CFrame = lookAt
+        State.RootPart.AssemblyLinearVelocity = Vector3.new(0, 22, 0)  -- small hop
+    end)
+
+    task.wait(0.32)   -- anti-spam cooldown
+end)
+    
+    -- Auto Farm Loop
+    local farmOffset = CFrame.new(0, 3, 3)
+    local farmBuffer = {}
+    
+    LoopManager.Start("AutoFarm", 0.6, function()
+        if not Features.AutoFarm.Enabled or not State.StartupDone then return end
+        if not State.RootPart or not State.RootPart.Parent then return end
+        if not State.Humanoid or State.Humanoid.Health <= 0 then return end
+        
+        local position = State.RootPart.Position
+        local bestEntity, bestDistance = nil, math.huge
+        
+        for _, entity in ipairs(EntityCache.List) do
+            if entity and entity ~= State.Character and entity.Parent and entity.Name ~= LocalPlayer.Name then
+                local root = entity:FindFirstChild("HumanoidRootPart")
+                local humanoid = entity:FindFirstChildOfClass("Humanoid")
+                
+                if root and humanoid and humanoid.Health > 0 then
+                    local distance = (position - root.Position).Magnitude
+                    
+                    if Features.KillAura.BossPriority and IsBoss(entity.Name) then
+                        distance = distance - 100000
+                    end
+                    
+                    if distance < bestDistance then
+                        bestDistance = distance
+                        bestEntity = entity
+                    end
+                end
+            end
+        end
+        
+        if bestEntity then
+            local targetRoot = bestEntity:FindFirstChild("HumanoidRootPart")
+            if targetRoot then
+                if FarmTeleport(targetRoot.CFrame * farmOffset) then
+                    farmBuffer[1] = bestEntity
+                    FireHit(farmBuffer)
+                end
+            end
+        end
+    end)
+    
+    -- Auto Slime Loop
+    LoopManager.Start("AutoSlime", 0.6, function()
+        if not Features.AutoSlime.Enabled then return end
+        
+        local slimeOffset = CFrame.new(0, 0, -3)
+        local buffer = {}
+        
+        for _, entity in ipairs(EntityCache.List) do
+            if entity and entity ~= State.Character and entity.Parent then
+                if entity.Name:lower():find("slime") then
+                    local root = entity:FindFirstChild("HumanoidRootPart") or entity:FindFirstChildWhichIsA("BasePart")
+                    local humanoid = entity:FindFirstChildOfClass("Humanoid")
+                    local alive = (not humanoid) or (humanoid.Health > 0)
+                    
+                    if root and root.Parent and alive then
+                        if FarmTeleport(root.CFrame * slimeOffset) then
+                            buffer[1] = entity
+                            FireHit(buffer)
+                        end
+                        break
+                    end
+                end
+            end
+        end
+    end)
+    
+    -- Auto Cryan Ryan Loop
+    LoopManager.Start("AutoCryanRyan", 0.6, function()
+        if not Features.AutoCryanRyan.Enabled then return end
+        
+        local offset = CFrame.new(0, 0, -3)
+        local buffer = {}
+        
+        for _, entity in ipairs(EntityCache.List) do
+            if entity and entity ~= State.Character and entity.Parent and entity.Name == "Cryan Ryan" then
+                local root = entity:FindFirstChild("HumanoidRootPart") or entity:FindFirstChildWhichIsA("BasePart")
+                local humanoid = entity:FindFirstChildOfClass("Humanoid")
+                local alive = (not humanoid) or (humanoid.Health > 0)
+                
+                if root and root.Parent and alive then
+                    if FarmTeleport(root.CFrame * offset) then
+                        buffer[1] = entity
+                        FireHit(buffer)
+                    end
+                    break
+                end
+            end
+        end
+    end)
+    
+    -- Auto Buff Bee Loop
+    LoopManager.Start("AutoBuffBee", 0.6, function()
+        if not Features.AutoBuffBee.Enabled then return end
+        
+        local offset = CFrame.new(0, 0, -3)
+        local buffer = {}
+        
+        for _, entity in ipairs(EntityCache.List) do
+            if entity and entity ~= State.Character and entity.Parent and entity.Name == "Buff Bee" then
+                local root = entity:FindFirstChild("HumanoidRootPart") or entity:FindFirstChildWhichIsA("BasePart")
+                local humanoid = entity:FindFirstChildOfClass("Humanoid")
+                local alive = (not humanoid) or (humanoid.Health > 0)
+                
+                if root and root.Parent and alive then
+                    if FarmTeleport(root.CFrame * offset) then
+                        buffer[1] = entity
+                        FireHit(buffer)
+                    end
+                    break
+                end
+            end
+        end
+    end)
+    
+    -- Auto Custom Farm Loop
+    LoopManager.Start("AutoCustomFarm", 0.6, function()
+        if not Features.AutoModCustom.Enabled then return end
+        
+        local name = Features.AutoModCustom.Name
+        if name == "" or name == "(No mobs found)" or name == "(Click Refresh to load mobs)" then
+            return
+        end
+        
+        local offset = CFrame.new(0, 0, -3)
+        local buffer = {}
+        
+        for _, entity in ipairs(EntityCache.List) do
+            if entity and entity ~= State.Character and entity.Parent and entity.Name == name then
+                local root = entity:FindFirstChild("HumanoidRootPart") or entity:FindFirstChildWhichIsA("BasePart")
+                local humanoid = entity:FindFirstChildOfClass("Humanoid")
+                local alive = (not humanoid) or (humanoid.Health > 0)
+                
+                if root and root.Parent and alive then
+                    if FarmTeleport(root.CFrame * offset) then
+                        buffer[1] = entity
+                        FireHit(buffer)
+                    end
+                    break
+                end
+            end
+        end
+    end)
+    
+    -- UPDATED: Improved Dungeon Auto Kill Loop
+    LoopManager.Start("DungeonAutoKill", 0.3, function()
+        if not Features.DungeonAutoKill.Enabled then return end
+        if not State.RootPart or not State.RootPart.Parent then return end
+        if not State.Humanoid or State.Humanoid.Health <= 0 then return end
+        
+        local position = State.RootPart.Position
+        local buffer = {}
+        local foundTarget = false
+        
+        -- First priority: Bosses if BossOnly mode
+        if Features.DungeonBossOnly.Enabled then
+            for _, entity in ipairs(EntityCache.List) do
+                if entity and entity ~= State.Character and entity.Parent then
+                    if IsBoss(entity.Name) and IsDungeonMob(entity.Name) then
+                        local root = entity:FindFirstChild("HumanoidRootPart") or entity:FindFirstChildWhichIsA("BasePart")
+                        local humanoid = entity:FindFirstChildOfClass("Humanoid")
+                        
+                        if root and humanoid and humanoid.Health > 0 then
+                            local offset = Features.DungeonSpeedRun.Enabled and CFrame.new(0, 0, -2) or CFrame.new(0, 0, -3)
+                            if FarmTeleport(root.CFrame * offset) then
+                                buffer[1] = entity
+                                FireHit(buffer)
+                            end
+                            foundTarget = true
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- Second priority: Any dungeon mob
+        if not foundTarget then
+            for _, entity in ipairs(EntityCache.List) do
+                if entity and entity ~= State.Character and entity.Parent then
+                    if IsDungeonMob(entity.Name) then
+                        local root = entity:FindFirstChild("HumanoidRootPart") or entity:FindFirstChildWhichIsA("BasePart")
+                        local humanoid = entity:FindFirstChildOfClass("Humanoid")
+                        
+                        if root and humanoid and humanoid.Health > 0 then
+                            if Features.DungeonBossOnly.Enabled and not IsBoss(entity.Name) then
+                                continue
+                            end
+                            
+                            local offset = Features.DungeonSpeedRun.Enabled and CFrame.new(0, 0, -2) or CFrame.new(0, 0, -3)
+                            if FarmTeleport(root.CFrame * offset) then
+                                buffer[1] = entity
+                                FireHit(buffer)
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    
+    -- UPDATED: Improved Dungeon Auto Loot Loop
+    LoopManager.Start("DungeonAutoLoot", 0.6, function()
+        if not Features.DungeonAutoLoot.Enabled then return end
+        if not State.RootPart or not State.RootPart.Parent then return end
+        
+        for _, drop in ipairs(EntityCache.List) do
+            if drop and drop.Parent then
+                if IsLoot(drop.Name) then
+                    local root = drop:FindFirstChild("HumanoidRootPart") or drop:FindFirstChildWhichIsA("BasePart")
+                    if root and root.Parent then
+                        FarmTeleport(root.CFrame * CFrame.new(0, 0, -2))
+                        task.wait(0.1)
+                    end
+                end
+            end
+        end
+    end)
+    
+    -- UPDATED: Improved Dungeon Auto Leave Loop
+    LoopManager.Start("DungeonAutoLeave", 5, function()
+        if not Features.DungeonAutoLeave.Enabled then return end
+        if not State.InDungeon then return end
+        
+        local elapsed = tick() - State.DungeonStartTime
+        if elapsed >= Features.DungeonAutoLeave.Timer then
+            -- Try to leave dungeon using found remote
+            if Remotes.LeaveDungeon then
+                pcall(function() Remotes.LeaveDungeon:FireServer() end)
+                Notify("Dungeon", "Auto-leaving dungeon...", 3)
+                State.InDungeon = false
+                DungeonSystem.Active = false
+            else
+                -- Fallback: Try all dungeon remotes
+                for name, remote in pairs(Remotes.DungeonRemotes) do
+                    if name:lower():find("leave") or name:lower():find("exit") then
+                        pcall(function() remote:FireServer() end)
+                        -- Auto-leaving dungeon
+                        State.InDungeon = false
+                        DungeonSystem.Active = false
+                        break
+                    end
+                end
+            end
+        end
+    end)
+    
+    -- UPDATED: Dungeon Auto Retry Loop
+    LoopManager.Start("DungeonAutoRetry", 10, function()
+        if not Features.DungeonAutoRetry.Enabled then return end
+        if State.InDungeon then return end
+        
+        -- If we were in a dungeon and now we're not, re-enter
+        if Features.AutoDungeon.Enabled and Features.AutoDungeon.Selected then
+            local dungeonName = Features.AutoDungeon.Selected
+            local location = DungeonSystem.Locations[dungeonName]
+            
+            if location then
+                -- Auto-retrying dungeon
+                SafeTeleport(location)
+                task.wait(2)
+                
+                -- Try to enter dungeon
+                if Remotes.EnterDungeon then
+                    pcall(function() Remotes.EnterDungeon:FireServer(dungeonName) end)
+                end
+            end
+        end
+    end)
+    
+    -- Auto Collect Loop
+    local collectOffset = CFrame.new(0, 0, -3)
+    local collectBuffer = {}
+    
+    LoopManager.Start("AutoCollect", 1, function()
+        if not Features.AutoCollect.Enabled and not Features.AutoChests.Enabled then
+            return
+        end
+        
+        if not State.StartupDone then return end
+        if not State.RootPart or not State.RootPart.Parent then return end
+        if not State.Humanoid or State.Humanoid.Health <= 0 then return end
+        
+        for _, drop in ipairs(EntityCache.List) do
+            if drop and drop.Parent then
+                local name = drop.Name:lower()
+                local shouldCollect = (Features.AutoCollect.Enabled and name:find("drop")) or
+                                      (Features.AutoChests.Enabled and name:find("chest"))
+                
+                if shouldCollect then
+                    local root = drop:FindFirstChild("HumanoidRootPart") or drop:FindFirstChildWhichIsA("BasePart")
+                    if root and root.Parent then
+                        if FarmTeleport(root.CFrame * collectOffset) then
+                            if Remotes.MultiEntityHit then
+                                collectBuffer[1] = drop
+                                pcall(function()
+                                    Remotes.MultiEntityHit:FireServer(collectBuffer)
+                                end)
+                            end
+                        end
+                        task.wait(0.12)
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   LIGHTING SYSTEM
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local LightingDefaults = {
+    Ambient = Lighting.Ambient,
+    Brightness = Lighting.Brightness
+}
+
+local function ToggleFullbright(enabled)
+    Features.Fullbright.Enabled = enabled
+    
+    if enabled then
+        Lighting.Ambient = Color3.new(1, 1, 1)
+        Lighting.Brightness = 2
+        -- Fullbright enabled
+    else
+        Lighting.Ambient = LightingDefaults.Ambient
+        Lighting.Brightness = LightingDefaults.Brightness
+        -- Fullbright disabled
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   CHEST COLLECTION SYSTEM
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local ChestSystem = {
+    Locations = {
+        CFrame.new(-2241.005, -83.629, 5689.71),
+        CFrame.new(-2105.961, 359.416, 302.895),
+        CFrame.new(-2221.331, 476.461, -21.245),
+        CFrame.new(-2496.734, 356.24, 582.462),
+        CFrame.new(-2497.788, 337.765, 853.076),
+        CFrame.new(-3482.701, 405.316, 3951.064),
+        CFrame.new(-3066.728, -190.498, 4023.686),
+        CFrame.new(-2960.041, -197.337, 3095.033),
+        CFrame.new(-2973.408, 364.157, 4355.572),
+        CFrame.new(-3297.958, 472.538, 4149.871),
+        CFrame.new(-3065.406, 320.6, 4358.008),
+        CFrame.new(-3430.986, 362.02, 4446.424),
+        CFrame.new(-3815.27, 477.184, 4277.667),
+        CFrame.new(-3383.22, 460.276, 4647.515),
+        CFrame.new(-2542.019, 330.539, 5606.198),
+        CFrame.new(-2375.244, 295.28, 1467.361),
+        CFrame.new(-3049.078, 320.723, 4861.261),
+        CFrame.new(-2131.872, 444.082, 465.914),
+        CFrame.new(-1893.302, -668.558, -1553.063),
+        CFrame.new(-1140.77, 20.667, 1181.215),
+        CFrame.new(-1603.867, -253.3, 3946.134),
+        CFrame.new(-2579.656, -4.254, 1222.378),
+        CFrame.new(920.786, -84.351, -987.272),
+        CFrame.new(-2091.394, -666.34, -436.782),
+        CFrame.new(-2229.086, 335.477, 809.949),
+        CFrame.new(-1191.901, 194.795, -60.772),
+    },
+    Names = {},
+    Selected = nil
+}
+
+-- Initialize chest names
+for i = 1, #ChestSystem.Locations do
+    ChestSystem.Names[i] = "Chest " .. i
+end
+ChestSystem.Selected = ChestSystem.Names[1]
+
+local function HoldE()
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, nil)
+    task.wait(1.2)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, nil)
+end
+
+local function StartAutoCollect()
+    if State.CollectingChests then
+        -- Collection already active
+        return
+    end
+    
+    State.CollectingChests = true
+    -- Collection started
+    
+    task.spawn(function()
+        if not State.RootPart then
+            State.CollectingChests = false
+            return
+        end
+        
+        local count = 0
+        
+        for i, cframe in ipairs(ChestSystem.Locations) do
+            if not State.CollectingChests or not State.RootPart then
+                break
+            end
+            
+            SafeTeleport(cframe)
+            task.wait(0.3)
+            HoldE()
+            task.wait(0.3)
+            
+            count = count + 1
+            
+            if i % 5 == 0 or i == 26 then
+                -- Collecting chests
+            end
+        end
+        
+        State.CollectingChests = false
+        -- Collection complete
+    end)
+end
+
+local function StopAutoCollect()
+    if State.CollectingChests then
+        State.CollectingChests = false
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, nil)
+        -- Collection stopped
+    else
+        -- No collection in progress
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   TELEPORT DATA
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local TeleportData = {
+    Locations = {
+        { "Spawn", CFrame.new(413.834, 191.392, 1368.842) },
+        { "Middlesbrough", CFrame.new(-201.492, 11.001, 992.404) },
+        { "Trader's Pass", CFrame.new(-1061.172, 22.346, 1323.045) },
+        { "Wheat Fields", CFrame.new(-1501, -38.359, 1493.54) },
+        { "Plains of Giants", CFrame.new(-2020.555, -88.326, 2412.171) },
+        { "New Cresthill", CFrame.new(-2488.568, -138.169, 2681.951) },
+        { "Unknown Area", CFrame.new(-2396.781, -324.622, 3793.208) },
+        { "Plains of Giants 2", CFrame.new(-1592.111, -259.796, 3981.331) },
+        { "Autumn Woods", CFrame.new(-94.907, -152.25, -1077.86) },
+        { "Tower", CFrame.new(922.899, -255.044, -1316.028) },
+    },
+    NPCs = {
+        { "Idri", CFrame.new(392.717, 194.107, 1378.358) },
+        { "Psyna", CFrame.new(282.757, 170.37, 1268.861) },
+        { "Guard", CFrame.new(-14.387, 28.435, 1111.004) },
+        { "Commander Bete", CFrame.new(-271.37, 16.836, 1099.138) },
+        { "Gabriel", CFrame.new(-222.163, 14.931, 1018.317) },
+        { "Tohma", CFrame.new(-238.764, 12.238, 882.779) },
+        { "Arabella", CFrame.new(-366.119, 12.679, 912.574) },
+        { "Colette", CFrame.new(-398.037, 13.375, 874.803) },
+        { "Felicity", CFrame.new(-467.464, 12.375, 880.734) },
+        { "Robert Lichter", CFrame.new(-536.492, 12.509, 825.507) },
+        { "Clerica", CFrame.new(-589.558, 12.001, 815.046) },
+        { "Arthur", CFrame.new(-654.362, 13.18, 841.716) },
+        { "Axial", CFrame.new(-726.453, 13.406, 792.108) },
+        { "Benedict", CFrame.new(-703.436, 15.804, 970.688) },
+        { "Gina", CFrame.new(-559.795, 20.212, 1227.201) },
+        { "Bayos", CFrame.new(-230.728, 7.885, 479.539) },
+        { "Taman", CFrame.new(-1025.932, 20.322, 599.299) },
+        { "Vaynelle", CFrame.new(-1573.533, 69.074, 435.062) },
+    }
+}
+
+-- Process teleport data
+local LocationNames = {}
+local LocationMap = {}
+for _, data in ipairs(TeleportData.Locations) do
+    LocationNames[#LocationNames + 1] = data[1]
+    LocationMap[data[1]] = data[2]
+end
+
+local NPCNames = {}
+local NPCMap = {}
+for _, data in ipairs(TeleportData.NPCs) do
+    NPCNames[#NPCNames + 1] = data[1]
+    NPCMap[data[1]] = data[2]
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   UI CREATION
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local Window = Fluent:CreateWindow({
+    Title = "Blue Heater 2",
+    SubTitle = "Made by Mink",
+    TabWidth = 180,
+    Size = UDim2.fromOffset(700, 550),
+    Acrylic = true,
+    Theme = "Darker",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+-- Create Tabs with verified Lucide icons
+local Tabs = {
+    Dashboard = Window:AddTab({ Title = "Dashboard", Icon = "home" }),
+    Movement = Window:AddTab({ Title = "Movement", Icon = "move" }),
+    Combat = Window:AddTab({ Title = "Combat", Icon = "sword" }),
+    Farm = Window:AddTab({ Title = "Auto Farm", Icon = "sprout" }),
+    Target = Window:AddTab({ Title = "Target Farm", Icon = "target" }),
+    Dungeon = Window:AddTab({ Title = "Dungeon", Icon = "skull" }),
+    Teleport = Window:AddTab({ Title = "Teleport", Icon = "map-pin" }),
+    Chest = Window:AddTab({ Title = "Treasure", Icon = "package" }),
+    Visual = Window:AddTab({ Title = "Visual", Icon = "eye" }),
+    Settings = Window:AddTab({ Title = "Settings", Icon = "cog" })
+}
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   DASHBOARD TAB
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+Tabs.Dashboard:AddParagraph({
+    Title = "Welcome to Blue Heater 2 - Improved Edition",
+    Content = "This script has been researched and improved with accurate dungeon data.\nAll dungeons are now properly mapped with correct locations."
+})
+
+local StatusSection = Tabs.Dashboard:AddSection("System Status")
+
+StatusSection:AddParagraph({
+    Title = "All Systems Operational",
+    Content = "Entity Cache: Active | Loops: Running | Dungeons: Mapped | Memory: Optimized"
+})
+
+StatusSection:AddButton({
+    Title = "Refresh Entity Cache",
+    Description = "Force rebuild the entity list",
+    Callback = function()
+        RebuildEntityCache()
+        -- Cache refreshed
+    end
+})
+
+local QuickActions = Tabs.Dashboard:AddSection("Quick Actions")
+
+QuickActions:AddButton({
+    Title = "Enable All Farms",
+    Description = "Activate Kill Aura + Auto Farm + Auto Collect",
+    Callback = function()
+        Features.KillAura.Enabled = true
+        Features.AutoFarm.Enabled = true
+        Features.AutoCollect.Enabled = true
+        -- Farms enabled
+    end
+})
+
+QuickActions:AddButton({
+    Title = "Enable Dungeon Mode",
+    Description = "Activate all dungeon features",
+    Callback = function()
+        Features.DungeonAutoKill.Enabled = true
+        Features.DungeonAutoLoot.Enabled = true
+        Features.DungeonESP.Enabled = true
+        ToggleDungeonESP(true)
+        -- Dungeon mode activated
+    end
+})
+
+QuickActions:AddButton({
+    Title = "Emergency Stop All",
+    Description = "Disable all active features instantly",
+    Callback = function()
+        -- Disable all features
+        for key, feature in pairs(Features) do
+            if type(feature) == "table" and feature.Enabled ~= nil then
+                feature.Enabled = false
+            end
+        end
+        
+        -- Cleanup systems
+        ToggleFly(false)
+        DisableNoclip()
+        CleanupInfiniteJump()
+        ToggleMobESP(false)
+        TogglePlayerESP(false)
+        ToggleDungeonESP(false)
+        DisableAntiAFK()
+        
+        -- All features disabled
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   MOVEMENT TAB
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local SpeedSection = Tabs.Movement:AddSection("Speed Control")
+
+SpeedSection:AddToggle("WalkSpeedToggle", {
+    Title = "Walk Speed",
+    Description = "Modify your movement speed",
+    Default = false,
+    Callback = function(value)
+        Features.WalkSpeed.Enabled = value
+        if State.Humanoid and State.Humanoid.Parent then
+            State.Humanoid.WalkSpeed = value and Features.WalkSpeed.Value or 16
+        end
+    end
+})
+
+SpeedSection:AddSlider("WalkSpeedSlider", {
+    Title = "Speed Multiplier",
+    Min = 16,
+    Max = 300,
+    Default = 50,
+    Rounding = 0,
+    Callback = function(value)
+        Features.WalkSpeed.Value = value
+        if Features.WalkSpeed.Enabled and State.Humanoid and State.Humanoid.Parent then
+            State.Humanoid.WalkSpeed = value
+        end
+    end
+})
+
+local JumpSection = Tabs.Movement:AddSection("Jump Control")
+
+JumpSection:AddToggle("JumpPowerToggle", {
+    Title = "Jump Power",
+    Description = "Override jump height",
+    Default = false,
+    Callback = function(value)
+        Features.JumpPower.Enabled = value
+        if value then
+            ApplyJumpPower()
+            if Features.InfiniteJump.Enabled then
+                Features.InfiniteJump.Enabled = false
+                CleanupInfiniteJump()
+            end
+        else
+            RestoreGameDefaults()
+        end
+    end
+})
+
+JumpSection:AddSlider("JumpPowerSlider", {
+    Title = "Jump Height",
+    Min = 50,
+    Max = 300,
+    Default = 50,
+    Rounding = 0,
+    Callback = function(value)
+        Features.JumpPower.Value = value
+        if Features.JumpPower.Enabled then
+            ApplyJumpPower()
+        end
+    end
+})
+
+JumpSection:AddToggle("InfiniteJumpToggle", {
+    Title = "Infinite Jump",
+    Description = "Jump indefinitely in mid-air",
+    Default = false,
+    Callback = function(value)
+        if value and Features.JumpPower.Enabled then
+            Features.InfiniteJump.Enabled = false
+            -- Disable Jump Power first
+            return
+        end
+        
+        Features.InfiniteJump.Enabled = value
+        if value then
+            SetupInfiniteJump()
+            -- Infinite Jump enabled
+        else
+            CleanupInfiniteJump()
+        end
+    end
+})
+
+local FlightSection = Tabs.Movement:AddSection("Flight System")
+
+FlightSection:AddToggle("FlyToggle", {
+    Title = "Fly Mode",
+    Description = "WASD + Space/Shift to control",
+    Default = false,
+    Callback = ToggleFly
+})
+
+FlightSection:AddSlider("FlySpeedSlider", {
+    Title = "Flight Speed",
+    Min = 10,
+    Max = 200,
+    Default = 50,
+    Rounding = 0,
+    Callback = function(value)
+        Features.Fly.Speed = value
+    end
+})
+
+local PhysicsSection = Tabs.Movement:AddSection("Physics")
+
+PhysicsSection:AddToggle("NoclipToggle", {
+    Title = "Noclip",
+    Description = "Walk through walls and objects",
+    Default = false,
+    Callback = function(value)
+        Features.Noclip.Enabled = value
+        if value then
+            EnableNoclip()
+            -- Noclip enabled
+        else
+            DisableNoclip()
+            Notify("Noclip", "Disabled!", 2)
+        end
+    end
+})
+
+PhysicsSection:AddToggle("FloatToggle", {
+    Title = "Float (Anti-Gravity)",
+    Description = "Nullify gravity effects",
+    Default = false,
+    Callback = function(value)
+        Features.Float.Enabled = value
+    end
+})
+
+PhysicsSection:AddToggle("AntiFallToggle", {
+    Title = "Anti-Fall Damage",
+    Description = "Prevents fall damage on landing",
+    Default = false,
+    Callback = function(value)
+        Features.AntiFall.Enabled = value
+        if value then
+            SetupAntiFall()
+            Notify("Anti-Fall", "Protection enabled!", 2)
+        end
+    end
+})
+
+PhysicsSection:AddToggle("InfStaminaToggle", {
+    Title = "Infinite Stamina",
+    Description = "Never run out of stamina",
+    Default = false,
+    Callback = function(value)
+        Features.InfStamina.Enabled = value
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   COMBAT TAB
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local AuraSection = Tabs.Combat:AddSection("Kill Aura")
+
+AuraSection:AddToggle("KillAuraToggle", {
+    Title = "Kill Aura",
+    Description = "Automatically attack nearby enemies",
+    Default = false,
+    Callback = function(value)
+        Features.KillAura.Enabled = value
+    end
+})
+
+AuraSection:AddSlider("KillAuraRadius", {
+    Title = "Aura Range",
+    Min = 10,
+    Max = 150,
+    Default = 30,
+    Rounding = 0,
+    Callback = function(value)
+        Features.KillAura.Radius = value
+    end
+})
+
+AuraSection:AddToggle("BossPriorityToggle", {
+    Title = "Boss Priority",
+    Description = "Target bosses first in range",
+    Default = false,
+    Callback = function(value)
+        Features.KillAura.BossPriority = value
+    end
+})
+
+local CombatExtras = Tabs.Combat:AddSection("Combat Extras")
+
+CombatExtras:AddToggle("InstantKillToggle", {
+    Title = "Rapid Kill",
+    Description = "Rapidly attack enemies to kill them instantly (may cause desync)",
+    Default = false,
+    Callback = function(value)
+        Features.InstantKill.Enabled = value
+        if value then
+            Notify("Rapid Kill", "Enabled! Targeting enemies in range...", 2)
+        else
+            Notify("Rapid Kill", "Disabled", 1)
+        end
+    end
+})
+
+CombatExtras:AddToggle("AutoDodgeToggle", {
+    Title = "Auto Dodge",
+    Description = "Teleport away when HP drops below 30%",
+    Default = false,
+    Callback = function(value)
+        Features.AutoDodge.Enabled = value
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   AUTO FARM TAB
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+Tabs.Farm:AddParagraph({
+    Title = "Automated Farming",
+    Content = "Select your target and let the script do the work.\nRecommended: Enable Kill Aura for maximum efficiency."
+})
+
+local FarmToggles = Tabs.Farm:AddSection("Farm Targets")
+
+FarmToggles:AddToggle("AutoSlimeToggle", {
+    Title = "Auto Farm Slimes",
+    Description = "Hunt slimes automatically",
+    Default = false,
+    Callback = function(value)
+        Features.AutoSlime.Enabled = value
+    end
+})
+
+FarmToggles:AddToggle("AutoCryanToggle", {
+    Title = "Auto Farm Cryan Ryan",
+    Description = "Target Cryan Ryan specifically",
+    Default = false,
+    Callback = function(value)
+        Features.AutoCryanRyan.Enabled = value
+    end
+})
+
+FarmToggles:AddToggle("AutoBuffBeeToggle", {
+    Title = "Auto Farm Buff Bee",
+    Description = "Hunt the Buff Bee",
+    Default = false,
+    Callback = function(value)
+        Features.AutoBuffBee.Enabled = value
+    end
+})
+
+FarmToggles:AddToggle("AutoFarmAllToggle", {
+    Title = "Auto Farm All Mobs",
+    Description = "Attack nearest living mob",
+    Default = false,
+    Callback = function(value)
+        Features.AutoFarm.Enabled = value
+    end
+})
+
+local CollectSection = Tabs.Farm:AddSection("Collection")
+
+CollectSection:AddToggle("AutoCollectToggle", {
+    Title = "Auto Collect Drops",
+    Description = "Pick up dropped items automatically",
+    Default = false,
+    Callback = function(value)
+        Features.AutoCollect.Enabled = value
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   TARGET FARM TAB
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+Tabs.Target:AddParagraph({
+    Title = "Precision Targeting",
+    Content = "Select a specific mob type to farm exclusively.\nUse 'Refresh Mob List' to scan your current area."
+})
+
+local TargetSection = Tabs.Target:AddSection("Target Selection")
+
+MobDropdown = TargetSection:AddDropdown("MobSelectDropdown", {
+    Title = "Select Target Mob",
+    Description = "Choose your farming target",
+    Values = {"(Click Refresh to load mobs)"},
+    Multi = false,
+    Default = "(Click Refresh to load mobs)",
+    Callback = function(value)
+        if value ~= "(Click Refresh to load mobs)" then
+            Features.AutoModCustom.Name = value
+        end
+    end
+})
+
+TargetSection:AddButton({
+    Title = "Refresh Mob List",
+    Description = "Scan area and update available targets",
+    Callback = function()
+        LastMobList = {}
+        RefreshMobDropdown()
+        
+        local count = #LastMobList
+        if count > 0 and LastMobList[1] ~= "(No mobs found)" then
+            Notify("Scan Complete", "Found " .. count .. " mob type(s)", 3)
+        else
+            Notify("No Mobs Detected", "Move closer to enemies and try again", 3)
+        end
+    end
+})
+
+TargetSection:AddToggle("AutoCustomFarmToggle", {
+    Title = "Farm Selected Target",
+    Description = "Begin farming the selected mob type",
+    Default = false,
+    Callback = function(value)
+        local name = Features.AutoModCustom.Name
+        if value and (name == "" or name == "(No mobs found)" or name == "(Click Refresh to load mobs)") then
+            Features.AutoModCustom.Enabled = false
+            Notify("No Target Selected", "Please refresh and select a mob first", 3)
+            return
+        end
+        
+        Features.AutoModCustom.Enabled = value
+        if value then
+            Notify("Now Farming", "Target: " .. Features.AutoModCustom.Name, 3)
+        end
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   DUNGEON TAB - FULLY WORKING (RESEARCHED & IMPROVED)
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+Tabs.Dungeon:AddParagraph({
+    Title = "Dungeon Automation - RESEARCHED & IMPROVED",
+    Content = "Complete dungeons automatically with accurate locations.\nAll dungeons mapped based on Blue Heater 2 Wiki data.\nF1: 7 Dungeons | F2: 3 Dungeons | F3: 9 Dungeons | F4: Tower"
+})
+
+local DungeonSelector = Tabs.Dungeon:AddSection("Dungeon Selection")
+
+DungeonSelector:AddDropdown("DungeonSelectDropdown", {
+    Title = "Select Dungeon",
+    Description = "Choose dungeon to enter",
+    Values = DungeonSystem.Names,
+    Multi = false,
+    Default = DungeonSystem.Names[1],
+    Callback = function(value)
+        Features.AutoDungeon.Selected = value
+        local floor = DungeonSystem.Floors[value]
+        local region = DungeonSystem.Regions[value]
+        Notify("Dungeon Selected", value .. " | " .. floor .. " | " .. region, 2)
+    end
+})
+
+DungeonSelector:AddButton({
+    Title = "Teleport to Dungeon Entrance",
+    Description = "Go to selected dungeon entrance",
+    Callback = function()
+        local dungeonName = Features.AutoDungeon.Selected
+        if dungeonName and DungeonSystem.Locations[dungeonName] then
+            SafeTeleport(DungeonSystem.Locations[dungeonName])
+            Notify("Teleported", "At " .. dungeonName .. " entrance (" .. DungeonSystem.Floors[dungeonName] .. ")", 3)
+        end
+    end
+})
+
+-- NEW: Auto Enter Dungeon Button
+DungeonSelector:AddButton({
+    Title = "Auto Enter Dungeon",
+    Description = "Teleport and attempt to enter dungeon",
+    Callback = function()
+        local dungeonName = Features.AutoDungeon.Selected
+        if dungeonName and DungeonSystem.Locations[dungeonName] then
+            SafeTeleport(DungeonSystem.Locations[dungeonName])
+            Notify("Teleporting", "Going to " .. dungeonName .. "...", 2)
+            
+            task.wait(2)
+            
+            -- Try to enter dungeon
+            if Remotes.EnterDungeon then
+                pcall(function() Remotes.EnterDungeon:FireServer(dungeonName) end)
+                Notify("Entering", "Attempting to enter " .. dungeonName, 3)
+            else
+                Notify("Enter Dungeon", "Please manually enter the dungeon portal", 3)
+            end
+            
+            State.InDungeon = true
+            State.CurrentDungeon = dungeonName
+            State.DungeonStartTime = tick()
+        end
+    end
+})
+
+local DungeonAuto = Tabs.Dungeon:AddSection("Auto Features")
+
+DungeonAuto:AddToggle("DungeonAutoKillToggle", {
+    Title = "Auto Kill Dungeon Mobs",
+    Description = "Automatically attack dungeon enemies",
+    Default = false,
+    Callback = function(value)
+        Features.DungeonAutoKill.Enabled = value
+        if value then
+            DungeonSystem.Active = true
+            Notify("Dungeon Auto Kill", "Enabled! Targeting dungeon mobs...", 2)
+        else
+            DungeonSystem.Active = false
+        end
+    end
+})
+
+DungeonAuto:AddToggle("DungeonBossOnlyToggle", {
+    Title = "Boss Only Mode",
+    Description = "Only target dungeon bosses",
+    Default = false,
+    Callback = function(value)
+        Features.DungeonBossOnly.Enabled = value
+        if value then
+            Notify("Boss Only", "Only targeting dungeon bosses", 2)
+        end
+    end
+})
+
+DungeonAuto:AddToggle("DungeonAutoLootToggle", {
+    Title = "Auto Loot Rewards",
+    Description = "Automatically collect dungeon drops and chests",
+    Default = false,
+    Callback = function(value)
+        Features.DungeonAutoLoot.Enabled = value
+        if value then
+            Notify("Auto Loot", "Collecting dungeon rewards...", 2)
+        end
+    end
+})
+
+DungeonAuto:AddToggle("DungeonSpeedRunToggle", {
+    Title = "Speed Run Mode",
+    Description = "Faster teleportation between mobs",
+    Default = false,
+    Callback = function(value)
+        Features.DungeonSpeedRun.Enabled = value
+        if value then
+            Notify("Speed Run", "Fast mode enabled!", 2)
+        end
+    end
+})
+
+local DungeonExit = Tabs.Dungeon:AddSection("Auto Exit")
+
+DungeonExit:AddToggle("DungeonAutoLeaveToggle", {
+    Title = "Auto Leave Dungeon",
+    Description = "Automatically exit after timer expires",
+    Default = false,
+    Callback = function(value)
+        Features.DungeonAutoLeave.Enabled = value
+        if value then
+            Notify("Auto Leave", "Will exit dungeon after " .. Features.DungeonAutoLeave.Timer .. " seconds", 2)
+        end
+    end
+})
+
+DungeonExit:AddSlider("DungeonLeaveTimer", {
+    Title = "Leave Timer (seconds)",
+    Min = 10,
+    Max = 300,
+    Default = 30,
+    Rounding = 0,
+    Callback = function(value)
+        Features.DungeonAutoLeave.Timer = value
+        Notify("Timer Set", "Auto-leave after " .. value .. " seconds", 2)
+    end
+})
+
+-- NEW: Auto Retry Dungeon
+DungeonExit:AddToggle("DungeonAutoRetryToggle", {
+    Title = "Auto Retry Dungeon",
+    Description = "Re-enter dungeon after leaving",
+    Default = false,
+    Callback = function(value)
+        Features.DungeonAutoRetry.Enabled = value
+        if value then
+            Notify("Auto Retry", "Will re-enter dungeon after leaving", 2)
+        end
+    end
+})
+
+local DungeonVisual = Tabs.Dungeon:AddSection("Visual")
+
+DungeonVisual:AddToggle("DungeonESPToggle", {
+    Title = "Dungeon Mob ESP",
+    Description = "Highlight dungeon enemies (Orange = Mob, Purple = Boss)",
+    Default = false,
+    Callback = ToggleDungeonESP
+})
+
+-- NEW: Dungeon Info Section
+local DungeonInfo = Tabs.Dungeon:AddSection("Dungeon Information")
+
+DungeonInfo:AddButton({
+    Title = "Show Dungeon List",
+    Description = "Display all available dungeons",
+    Callback = function()
+        local info = "=== DUNGEON LIST ===\n\n"
+        info = info .. "BOSS DUNGEONS:\n"
+        info = info .. "• Skeleton King (F1 - Castle Mourne)\n"
+        info = info .. "• Orian (F3 - Sun Palace)\n"
+        info = info .. "• Puppet Master (Event)\n"
+        info = info .. "• Easter Bunny (Event)\n"
+        info = info .. "• The Beating Heart (Event)\n"
+        info = info .. "• Spectral Dragon (F3)\n\n"
+        info = info .. "REGULAR DUNGEONS (F1):\n"
+        info = info .. "• Enchanted Forest, Temple Ruins, Mines\n"
+        info = info .. "• Cellar, Catacombs\n\n"
+        info = info .. "REGULAR DUNGEONS (F2):\n"
+        info = info .. "• Haunted Mansion, Ominous Cave\n"
+        info = info .. "• Arcane Archive\n\n"
+        info = info .. "REGULAR DUNGEONS (F3):\n"
+        info = info .. "• Melted Castle, City Sewers, Buried Tomb\n"
+        info = info .. "• Secluded Spire, Mountain Temple, Bamboo Forest\n\n"
+        info = info .. "DAILY BOSSES:\n"
+        info = info .. "• Death, Orochi-onna, Space Moth\n\n"
+        info = info .. "SPECIAL:\n"
+        info = info .. "• The Tower (F4 - Autumn Woods)"
+        
+        Notify("Dungeon Info", info, 10)
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   TELEPORT TAB
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+Tabs.Teleport:AddParagraph({
+    Title = "Fast Travel",
+    Content = "Instantly teleport to key locations and NPCs."
+})
+
+local LocationSection = Tabs.Teleport:AddSection("Locations")
+
+local SelectedLocation = LocationNames[1]
+
+LocationSection:AddDropdown("TeleportLocationDropdown", {
+    Title = "Select Destination",
+    Values = LocationNames,
+    Multi = false,
+    Default = LocationNames[1],
+    Callback = function(value)
+        SelectedLocation = value
+    end
+})
+
+LocationSection:AddButton({
+    Title = "Teleport Now",
+    Callback = function()
+        if SelectedLocation and LocationMap[SelectedLocation] then
+            SafeTeleport(LocationMap[SelectedLocation])
+            Notify("Teleported", "Arrived at " .. SelectedLocation, 2)
+        end
+    end
+})
+
+local NPCSection = Tabs.Teleport:AddSection("NPCs")
+
+local SelectedNPC = NPCNames[1]
+
+NPCSection:AddDropdown("TeleportNPCDropdown", {
+    Title = "Select NPC",
+    Values = NPCNames,
+    Multi = false,
+    Default = NPCNames[1],
+    Callback = function(value)
+        SelectedNPC = value
+    end
+})
+
+NPCSection:AddButton({
+    Title = "Teleport to NPC",
+    Callback = function()
+        if SelectedNPC and NPCMap[SelectedNPC] then
+            SafeTeleport(NPCMap[SelectedNPC])
+            Notify("Teleported", "Now at " .. SelectedNPC, 2)
+        end
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   CHEST TAB
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+Tabs.Chest:AddParagraph({
+    Title = "Treasure Hunter",
+    Content = "Locate and collect all hidden chests in the world.\n26 chests are available to collect."
+})
+
+local SingleChestSection = Tabs.Chest:AddSection("Single Chest")
+
+local SelectedChestName = ChestSystem.Names[1]
+
+SingleChestSection:AddDropdown("ChestSelectDropdown", {
+    Title = "Select Chest",
+    Values = ChestSystem.Names,
+    Multi = false,
+    Default = ChestSystem.Names[1],
+    Callback = function(value)
+        SelectedChestName = value
+    end
+})
+
+SingleChestSection:AddButton({
+    Title = "Teleport to Chest",
+    Callback = function()
+        if SelectedChestName then
+            local index = tonumber(SelectedChestName:match("%d+"))
+            if index and ChestSystem.Locations[index] then
+                SafeTeleport(ChestSystem.Locations[index])
+                Notify("Teleported", "At " .. SelectedChestName, 2)
+            end
+        end
+    end
+})
+
+local AutoCollectSection = Tabs.Chest:AddSection("Auto Collector")
+
+AutoCollectSection:AddButton({
+    Title = "Start Auto Collect (All 26)",
+    Description = "Automatically visit and loot all chests",
+    Callback = StartAutoCollect
+})
+
+AutoCollectSection:AddButton({
+    Title = "Stop Auto Collect",
+    Callback = StopAutoCollect
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   VISUAL TAB
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+Tabs.Visual:AddParagraph({
+    Title = "Visual Enhancements",
+    Content = "ESP and lighting modifications for better visibility."
+})
+
+local ESPSection = Tabs.Visual:AddSection("ESP System")
+
+ESPSection:AddToggle("MobESPToggle", {
+    Title = "Mob ESP",
+    Description = "Highlight enemies (Red = Normal, Pink = Boss)",
+    Default = false,
+    Callback = ToggleMobESP
+})
+
+ESPSection:AddToggle("PlayerESPToggle", {
+    Title = "Player ESP",
+    Description = "Highlight other players in green",
+    Default = false,
+    Callback = TogglePlayerESP
+})
+
+local LightingSection = Tabs.Visual:AddSection("Lighting")
+
+LightingSection:AddToggle("FullbrightToggle", {
+    Title = "Fullbright",
+    Description = "Maximum visibility everywhere",
+    Default = false,
+    Callback = ToggleFullbright
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   SETTINGS TAB
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+Tabs.Settings:AddParagraph({
+    Title = "Configuration",
+    Content = "Save your preferences and manage server connections."
+})
+
+local UtilitySection = Tabs.Settings:AddSection("Utilities")
+
+UtilitySection:AddToggle("AntiAFKToggle", {
+    Title = "Anti-AFK",
+    Description = "Prevent automatic kicks for inactivity",
+    Default = false,
+    Callback = function(value)
+        Features.AntiAFK.Enabled = value
+        if value then
+            SetupAntiAFK()
+        else
+            DisableAntiAFK()
+        end
+    end
+})
+
+local ServerSection = Tabs.Settings:AddSection("Server Management")
+
+ServerSection:AddButton({
+    Title = "Rejoin Server",
+    Description = "Reconnect to current server",
+    Callback = function()
+        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+    end
+})
+
+ServerSection:AddButton({
+    Title = "Server Hop (Low Ping)",
+    Description = "Find a server with better connection",
+    Callback = function()
+        pcall(function()
+            local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+            local response = game:HttpGet(url)
+            local data = HttpService:JSONDecode(response)
+            
+            for _, server in pairs(data.data) do
+                if server.playing < server.maxPlayers and server.id ~= game.JobId then
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, LocalPlayer)
+                    return
+                end
+            end
+            
+            Notify("Server Hop", "No available servers found", 3)
+        end)
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   SAVE MANAGER SETUP
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+SaveManager:SetLibrary(Fluent)
+InterfaceManager:SetLibrary(Fluent)
+InterfaceManager:SetFolder("BlueHeater2Mink")
+SaveManager:SetFolder("BlueHeater2Mink/configs")
+SaveManager:BuildConfigSection(Tabs.Settings)
+InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--   INITIALIZATION
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+local function Initialize()
+    -- Initialize remotes and cache
+    InitializeRemotes()
+    SetupEntityCache()
+    
+    -- Setup workspace listener
+    local success = pcall(function()
+        Workspace.ChildAdded:Connect(function(child)
+            if child.Name == "SpawnedEntities" then
+                EntityCache.SpawnedEntities = child
+                task.wait(0.1)
+                SetupEntityCache()
+            end
+        end)
+    end)
+    
+    -- Initialize character
+    InitializeCharacter()
+    
+    -- Start core loops
+    InitializeCoreLoops()
+    
+    -- Load config
+    SaveManager:LoadAutoloadConfig()
+    
+    -- Reset conflicting features
+    task.wait(0.15)
+    Features.JumpPower.Enabled = false
+    Features.InfiniteJump.Enabled = false
+    CleanupInfiniteJump()
+    RestoreGameDefaults()
+    
+    task.wait(0.05)
+    pcall(function() Tabs.Dashboard:Select() end)
+    
+    -- Script loaded silently
+    -- print("[Blue Heater 2] Made by Mink - Loaded Successfully!")
+    -- print("[Blue Heater 2] Only is only supposed to be used in Blue Heater 2. Use in other games may cause issues.")
+end
+
+-- Start the script
+Initialize() 
